@@ -1,19 +1,22 @@
 // ============================================================
 //  departmentsConfig.js
-//  بيخزن التخصصات لكل كلية في localStorage
 // ============================================================
 
 const STORAGE_KEY = "collegeDepartments";
+const VERSION_KEY = "collegeDepartmentsVersion";
+
+// ↓ ارفع الرقم ده بواحد كل ما تعدل في الـ DEFAULTS
+const CURRENT_VERSION = 1;
 
 const DEFAULTS = {
   ComputerScience: [
-    { id: "cs", name: "CS", years: 3  },
-    { id: "is", name: "IS", years: 3 },
+    { id: "cs", name: "CS", years: 4 },
+    { id: "is", name: "IS", years: 4 },
   ],
   engineering: [
-    { id: "general", name: "General", years: 1 },
-    { id: "Mechatronics", name: "Mechatronics", years: 4, skipToYear: 2 },
-    { id: "Construction and building", name: "Construction and building", years: 4, skipToYear: 2 },
+    { id: "general", name: "general", years: 1 },
+    { id: "Mechatronics", name: "Mechatronics", years: 4 },
+    { id: "Construction and building", name: "Construction and building", years: 4 },
   ],
   Media_and_Communication_Arts: [
     { id: "Radio and Television", name: "Radio and Television", years: 4 },
@@ -48,9 +51,19 @@ const saveAll = (data) => {
 /** اجيب كل التخصصات المخزونة */
 const loadAll = () => {
   try {
+    const storedVersion = parseInt(localStorage.getItem(VERSION_KEY) || "0");
+
+    // لو الـ version اتغير → امسح القديم وحط الـ DEFAULTS الجديدة
+    if (storedVersion !== CURRENT_VERSION) {
+      saveAll({ ...DEFAULTS });
+      localStorage.setItem(VERSION_KEY, String(CURRENT_VERSION));
+      return { ...DEFAULTS };
+    }
+
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       saveAll({ ...DEFAULTS });
+      localStorage.setItem(VERSION_KEY, String(CURRENT_VERSION));
       return { ...DEFAULTS };
     }
     const stored = JSON.parse(raw);
@@ -98,19 +111,12 @@ export const deleteDepartment = (collegeId, deptId) => {
   return all[collegeId];
 };
 
-/**
- * بيحول التخصصات لـ year labels مع دعم skipToYear
- * مثال engineering:
- *   general(1 سنة)          → { 1: "general - Year 1" }
- *   Mechatronics(4 سنين، skipToYear:2) → { 2: "Mechatronics - Year 2", 3: "Year 3", 4: "Year 4", 5: "Year 5" }
- */
 export const buildYearLabels = (collegeId) => {
   const deps = getDepartments(collegeId);
   const labels = {};
   let counter = 1;
   deps.forEach((dept) => {
-    const startYear = dept.skipToYear || counter;
-    for (let y = startYear; y < startYear + dept.years; y++) {
+    for (let y = 1; y <= dept.years; y++) {
       labels[counter] = `${dept.name} - Year ${y}`;
       counter++;
     }
@@ -121,4 +127,33 @@ export const buildYearLabels = (collegeId) => {
 export const getYearLabel = (year, collegeId) => {
   const labels = buildYearLabels(collegeId);
   return labels[parseInt(year)] || `Year ${year}`;
+};
+
+/**
+ * بتعمل sync بين الـ DEFAULTS والـ localStorage
+ * بتحافظ على التخصصات اللي المستخدم ضافها يدوياً
+ * وبتضيف أي تخصص جديد في الـ DEFAULTS
+ * استخدمها بدل localStorage.removeItem('collegeDepartments')
+ */
+export const syncWithDefaults = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const stored = raw ? JSON.parse(raw) : {};
+    const merged = { ...stored };
+    Object.keys(DEFAULTS).forEach((collegeId) => {
+      if (!merged[collegeId]) {
+        merged[collegeId] = [...DEFAULTS[collegeId]];
+      } else {
+        const existingIds = merged[collegeId].map((d) => d.id);
+        DEFAULTS[collegeId].forEach((defaultDept) => {
+          if (!existingIds.includes(defaultDept.id)) {
+            merged[collegeId].push({ ...defaultDept });
+          }
+        });
+      }
+    });
+    saveAll(merged);
+  } catch {
+    saveAll({ ...DEFAULTS });
+  }
 };
