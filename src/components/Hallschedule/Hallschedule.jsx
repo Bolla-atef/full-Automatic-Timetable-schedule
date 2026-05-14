@@ -9,6 +9,8 @@ import {
 } from "@material-tailwind/react";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import { getYearLabel } from "../config/departmentsConfig";
+import { getSelectedCollege } from "../config/collegeConfig";
 import LoadingAnimation from "../Loading/Loading";
 import Slidebar from "../Slidebar/Slidebar";
 import jsPDF from "jspdf";
@@ -31,7 +33,7 @@ const WeeklyClassroomTimetable = () => {
     { id: "7", name: "Friday" },
   ];
 
-  // دالة تنظيم البيانات من الAPI
+  // دالة تنظيم البيانات من الAPI — مع deduplication لمنع التكرار
   const organizeData = (data) => {
     const classrooms = {};
     const allTimeSlots = new Set();
@@ -43,18 +45,30 @@ const WeeklyClassroomTimetable = () => {
 
       if (!classrooms[classroom]) classrooms[classroom] = {};
       if (!classrooms[classroom][day]) classrooms[classroom][day] = {};
+      if (!classrooms[classroom][day][time]) classrooms[classroom][day][time] = [];
 
-      if (!classrooms[classroom][day][time]) {
-        classrooms[classroom][day][time] = [];
+      const key = entry.name_course + "||" + entry.name_professor;
+      const existing = classrooms[classroom][day][time].find(
+        (l) => l.key === key
+      );
+
+      const collegeId = getSelectedCollege().id;
+      const yearLabel = getYearLabel(entry.year, collegeId);
+      const groupLabel = yearLabel + " - " + entry.name_group;
+
+      if (existing) {
+        if (!existing.groups.includes(groupLabel)) {
+          existing.groups.push(groupLabel);
+        }
+      } else {
+        classrooms[classroom][day][time].push({
+          key,
+          course: entry.name_course,
+          professor: entry.name_professor,
+          groups: [groupLabel],
+          time: entry.time_slot,
+        });
       }
-
-      classrooms[classroom][day][time].push({
-        course: entry.name_course,
-        professor: entry.name_professor, // أضفنا اسم الأستاذ
-        year: entry.year, // أضفنا السنة الدراسية
-        group: entry.name_group, // أضفنا اسم الجروب
-        time: entry.time_slot,
-      });
 
       allTimeSlots.add(time);
     });
@@ -268,15 +282,27 @@ const WeeklyClassroomTimetable = () => {
                           key={idx}
                           className="mb-2 p-2 rounded bg-green-300"
                         >
-                          <div className="text-sm text-gray-800">
+                          <div className="text-sm font-semibold text-gray-800">
                             {lecture.course}
                           </div>
-
-                          <div className="text-xs text-gray-600">
-                            <span className="block">{lecture.professor}</span>
-                            <span>
-                              Year {lecture.year} - Group {lecture.group}
-                            </span>
+                          <div className="text-xs text-gray-700 font-medium mt-1">
+                            {lecture.professor}
+                          </div>
+                          <div className="text-xs text-gray-600 mt-1">
+                            {lecture.groups.length === 1 ? (
+                              <span>{lecture.groups[0]}</span>
+                            ) : (
+                              <details>
+                                <summary className="cursor-pointer text-blue-600 font-medium">
+                                  {lecture.groups.length} Groups
+                                </summary>
+                                <div className="mt-1 space-y-0.5">
+                                  {lecture.groups.map((g, i) => (
+                                    <div key={i} className="text-gray-500">{g}</div>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
                           </div>
                         </div>
                       )
