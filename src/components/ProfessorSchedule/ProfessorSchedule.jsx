@@ -9,6 +9,8 @@ import {
 } from "@material-tailwind/react";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import { getYearLabel } from "../config/departmentsConfig";
+import { getSelectedCollege } from "../config/collegeConfig";
 import LoadingAnimation from "../Loading/Loading";
 import Slidebar from "./../Slidebar/Slidebar";
 import jsPDF from "jspdf";
@@ -193,6 +195,7 @@ const ProfessorTimetable = () => {
   const organizeData = (data) => {
     const professors = {};
     const allTimeSlots = new Set();
+    const collegeId = getSelectedCollege().id;
 
     data.flat().forEach((entry) => {
       const professor = entry.name_professor;
@@ -205,12 +208,27 @@ const ProfessorTimetable = () => {
         professors[professor][day][normalizedTime] = [];
       }
 
-      professors[professor][day][normalizedTime].push({
-        course: entry.name_course,
-        group: entry.group_name,
-        room: entry.class_room_name,
-        year: entry.year,
-      });
+      // Deduplication: نفس المادة + نفس القاعة في نفس الـ slot = entry واحد
+      const key = entry.name_course + "||" + entry.class_room_name;
+      const existing = professors[professor][day][normalizedTime].find(
+        (l) => l.key === key
+      );
+
+      const yearLabel = getYearLabel(entry.year, collegeId);
+      const groupLabel = yearLabel + " - " + entry.group_name;
+
+      if (existing) {
+        if (!existing.groups.includes(groupLabel)) {
+          existing.groups.push(groupLabel);
+        }
+      } else {
+        professors[professor][day][normalizedTime].push({
+          key,
+          course: entry.name_course,
+          room: entry.class_room_name,
+          groups: [groupLabel],
+        });
+      }
 
       allTimeSlots.add(normalizedTime);
     });
@@ -282,10 +300,24 @@ const ProfessorTimetable = () => {
                           key={idx}
                           className="mb-2 p-2 rounded bg-blue-600 text-white"
                         >
-                          <div className="font-bold">{lecture.course}</div>
-                          <div>Group: {lecture.group}</div>
-                          <div>Room: {lecture.room}</div>
-                          <div>Year: {lecture.year}</div>
+                          <div className="font-bold text-sm">{lecture.course}</div>
+                          <div className="text-xs mt-1">Room: {lecture.room}</div>
+                          <div className="text-xs mt-1">
+                            {lecture.groups.length === 1 ? (
+                              <span>{lecture.groups[0]}</span>
+                            ) : (
+                              <details>
+                                <summary className="cursor-pointer text-blue-200 font-medium">
+                                  {lecture.groups.length} Groups
+                                </summary>
+                                <div className="mt-1 space-y-0.5">
+                                  {lecture.groups.map((g, i) => (
+                                    <div key={i} className="text-blue-100">{g}</div>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
+                          </div>
                         </div>
                       )
                     )}
