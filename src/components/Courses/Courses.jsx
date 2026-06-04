@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment, useMemo } from "react";
+import { useState, useEffect, Fragment, useMemo, useRef } from "react";
 import axios from "axios";
 import {
   Input,
@@ -30,6 +30,7 @@ import {
   addDepartment,
   deleteDepartment,
   getYearLabel,
+  buildReverseYearMap,
 } from "../config/departmentsConfig";
 
 const GetCourses = () => {
@@ -40,6 +41,7 @@ const GetCourses = () => {
   const [deptModalOpen, setDeptModalOpen] = useState(false);
   const [newDeptName, setNewDeptName] = useState("");
   const [newDeptYears, setNewDeptYears] = useState("4");
+  const [newDeptStartYear, setNewDeptStartYear] = useState("1");
 
   // Dynamic getYearLabel using selected college
   const yearLabel = (year) => getYearLabel(year, collegeId);
@@ -65,6 +67,18 @@ const GetCourses = () => {
   const [editGropLap, setEditGropLap] = useState("");
   const [editEnrollment, setEditEnrollment] = useState("");
   const [yearsList, setYearsList] = useState([]);
+
+  // ── Shared Group Code (Link Courses) ─────────────────────────
+  const [linkCourseId, setLinkCourseId] = useState(null);   // الـ ID بتاع المادة اللي هتتربط بيها
+
+  // ── Excel Upload ──────────────────────────────────────────────
+  const excelInputRef = useRef(null);
+  const [excelModalOpen, setExcelModalOpen] = useState(false);
+  const [excelYear, setExcelYear] = useState("");
+  const [excelGrops, setExcelGrops] = useState("1");
+  const [excelGropLap, setExcelGropLap] = useState("1");
+  const [excelEnrollment, setExcelEnrollment] = useState("100");
+  const [excelUploading, setExcelUploading] = useState(false);
 const [staffDialogOpen, setStaffDialogOpen] = useState(false);
 const [staffType, setStaffType] = useState(""); // "professors" or "teachingAssistants"
 const [staffList, setStaffList] = useState([]);
@@ -277,13 +291,12 @@ const getCourseById = async (id) => {
   });
 
   const updateNameMutation = useMutation({
-    mutationFn: async ({ id, newName, grops, grop_lap, enrollment }) => {
+    mutationFn: async ({ id, newName, grops, grop_lap, enrollment, sharedGroupCode }) => {
       const token = localStorage.getItem("userToken");
       if (!token) throw new Error("No authentication token found");
 
       const cachedCourses = queryClient.getQueryData(["courses"]) || [];
       const currentCourse = cachedCourses.find((c) => c.id === id);
-
       if (!currentCourse) throw new Error("المادة غير موجودة");
 
       const payload = {
@@ -292,6 +305,8 @@ const getCourseById = async (id) => {
         grops: parseInt(grops) || currentCourse.grops,
         grop_lap: parseInt(grop_lap) || currentCourse.grop_lap,
         enrollment: parseInt(enrollment) || currentCourse.enrollment,
+        sharedGroupCode: linkCourseId ? sharedGroupCode : null,
+
       };
 
       const { data } = await axios.put(
@@ -299,6 +314,19 @@ const getCourseById = async (id) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      // لو اختار مادة يربطها بيها → حدّث المادة التانية كمان بنفس الـ SharedGroupCode
+      if (sharedGroupCode) {
+        const linkedCourse = cachedCourses.find((c) => c.id === parseInt(linkCourseId));
+        if (linkedCourse) {
+          await axios.put(
+            `${import.meta.env.VITE_API_URL}/api/Courses/${linkedCourse.id}`,
+            { ...linkedCourse, sharedGroupCode },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        }
+      }
+
       return data;
     },
     onSuccess: () => {
@@ -310,6 +338,7 @@ const getCourseById = async (id) => {
       setEditGropLap("");
       setEditEnrollment("");
       setEditingCourse(null);
+      setLinkCourseId(null);
     },
     onError: (error) => {
       toast.error(`❌ فشل التحديث: ${error.message}`);
@@ -431,7 +460,7 @@ const handleViewStaff = async (courseId, type) => {
     const nextYear = yearsList[yearsList.length - 1];
     setCourse({
       year: String(nextYear),
-      grops: "3", // Default values
+      grops: "3",
       grop_lap: "1",
       enrollment: "100",
       name: "",
@@ -439,13 +468,90 @@ const handleViewStaff = async (courseId, type) => {
     setOpen(true);
   };
 
+  // ── Excel Upload Handler ──────────────────────────────────────
+  const handleExcelUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setExcelUploading(true);
+    const token = localStorage.getItem("userToken");
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+      // بناء الـ reverse map: "cs-1" → sequential year number
+      const reverseMap = buildReverseYearMap(collegeId);
+
+      // استخراج الصفوف — العمود A: "cs-1" أو "CS-2"، العمود B: اسم المادة
+      const entries = rows
+        .map((r) => ({
+          deptYear: r[0] ? String(r[0]).trim().toLowerCase() : "",
+          name: r[1] ? String(r[1]).trim() : "",
+        }))
+        .filter((r) => r.deptYear && r.name && isNaN(r.deptYear));
+
+      if (entries.length === 0) {
+        toast.error("مفيش بيانات صحيحة في الملف — تأكد من الفورمات: cs-1 | اسم المادة");
+        setExcelUploading(false);
+        return;
+      }
+
+      // تحقق إن كل الـ dept-year موجودة في الـ map
+      const unknownKeys = [...new Set(entries.map((e) => e.deptYear))].filter(
+        (k) => !reverseMap[k]
+      );
+      if (unknownKeys.length > 0) {
+        toast.error(`تخصصات مش معروفة: ${unknownKeys.join(", ")}`);
+        setExcelUploading(false);
+        e.target.value = "";
+        return;
+      }
+
+      let added = 0;
+      let failed = 0;
+
+      for (const entry of entries) {
+        const seqYear = reverseMap[entry.deptYear];
+        try {
+          await axios.post(
+            `${import.meta.env.VITE_API_URL}/api/Courses`,
+            {
+              name: entry.name,
+              year: seqYear,
+              grops: parseInt(excelGrops) || 1,
+              grop_lap: parseInt(excelGropLap) || 1,
+              enrollment: parseInt(excelEnrollment) || 100,
+            },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          added++;
+        } catch {
+          failed++;
+        }
+      }
+
+      await queryClient.invalidateQueries(["courses"]);
+      toast.success(`✅ تم إضافة ${added} مادة${failed > 0 ? ` (${failed} فشلت)` : ""}`);
+      setExcelModalOpen(false);
+      e.target.value = "";
+    } catch (err) {
+      toast.error("❌ فشل قراءة الملف");
+    } finally {
+      setExcelUploading(false);
+    }
+  };
+
   // ── Department Handlers ───────────────────────────────────
   const handleAddDepartment = () => {
     if (!newDeptName.trim()) return;
-    const updated = addDepartment(collegeId, newDeptName.trim(), newDeptYears);
+    const updated = addDepartment(collegeId, newDeptName.trim(), newDeptYears, newDeptStartYear);
     setDepartments(updated);
     setNewDeptName("");
     setNewDeptYears("4");
+    setNewDeptStartYear("1");
     toast.success(`Department "${newDeptName}" added`);
   };
 
@@ -514,7 +620,11 @@ const handleViewStaff = async (courseId, type) => {
                     <div key={dept.id} className="flex items-center justify-between bg-gray-800 rounded-lg px-4 py-2">
                       <div>
                         <span className="text-white font-medium">{dept.name}</span>
-                        <span className="text-gray-400 text-sm ml-2">({dept.years} years)</span>
+                        <span className="text-gray-400 text-sm ml-2">({dept.years} years</span>
+                        {(dept.startYear || 1) > 1 && (
+                          <span className="text-cyan-400 text-sm">, starts Y{dept.startYear}</span>
+                        )}
+                        <span className="text-gray-400 text-sm">)</span>
                       </div>
                       <button
                         onClick={() => handleDeleteDepartment(dept.id, dept.name)}
@@ -547,7 +657,20 @@ const handleViewStaff = async (courseId, type) => {
                     onChange={(e) => setNewDeptYears(e.target.value)}
                     className="w-20 bg-gray-800 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cyan-500"
                   />
+                  <input
+                    type="number"
+                    placeholder="Start Y"
+                    min="1"
+                    max="10"
+                    title="السنة اللي بيبدأ منها التخصص (مثلاً 2 لو فيه General قبله)"
+                    value={newDeptStartYear}
+                    onChange={(e) => setNewDeptStartYear(e.target.value)}
+                    className="w-20 bg-gray-800 border border-gray-600 text-cyan-400 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cyan-500"
+                  />
                 </div>
+                <p className="text-gray-500 text-xs mb-3">
+                  Start Y: السنة اللي بيبدأ منها العرض — اتركها 1 لو مفيش General قبله
+                </p>
                 <button
                   onClick={handleAddDepartment}
                   disabled={!newDeptName.trim()}
@@ -702,17 +825,54 @@ const handleViewStaff = async (courseId, type) => {
               }}
             />
           </div>
+
+          {/* ── Link to Shared Course ── */}
+          <div>
+            <Typography variant="small" color="blue-gray" className="mb-2 font-medium">
+              Link to Shared Course <span className="text-gray-400 font-normal">(optional)</span>
+            </Typography>
+            <select
+              value={linkCourseId ?? ""}
+              onChange={(e) => setLinkCourseId(e.target.value || null)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-500"
+            >
+              <option value="">-- Empty --</option>
+              {courses
+                .filter((c) => c.id !== editingCourse?.id)
+                .sort((a, b) => a.year - b.year || a.name.localeCompare(b.name))
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {yearLabel(c.year)} — {c.name}
+                    {c.sharedGroupCode ? ` 🔗` : ""}
+                  </option>
+                ))}
+            </select>
+            {linkCourseId && (
+              <p className="text-xs text-blue-600 mt-1">
+              </p>
+            )}
+          </div>
         </DialogBody>
         <DialogFooter>
           <Button
             onClick={() => {
               if (editingCourse && newName.trim()) {
+                // احسب الـ SharedGroupCode
+                let sharedGroupCode = null;
+                if (linkCourseId) {
+                  const targetCourse = courses.find((c) => c.id === parseInt(linkCourseId));
+                  // لو المادة المختارة عندها كود → استخدمه، لو لأ → اعمل كود جديد
+                  sharedGroupCode = targetCourse?.sharedGroupCode || 
+                    `SGC_${Math.min(editingCourse.id, parseInt(linkCourseId))}_${Math.max(editingCourse.id, parseInt(linkCourseId))}`;
+                }
+
                 updateNameMutation.mutate({
                   id: editingCourse.id,
                   newName: newName.trim(),
                   grops: editGrops,
                   grop_lap: editGropLap,
                   enrollment: editEnrollment,
+                  sharedGroupCode,
                 });
               }
             }}
@@ -920,6 +1080,63 @@ const handleViewStaff = async (courseId, type) => {
 </Dialog>
 
 
+      {/* ── Excel Upload Modal ── */}
+      {excelModalOpen && (
+        <div className="fixed z-50 inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-gray-700">
+              <h2 className="text-white font-bold text-lg">Import Courses from Excel</h2>
+              <button onClick={() => setExcelModalOpen(false)} className="text-gray-400 hover:text-white">
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-gray-800 rounded-lg p-3">
+                <p className="text-gray-300 text-sm font-medium mb-1">فورمات الشيت:</p>
+                <p className="text-cyan-400 text-xs font-mono">العمود A → cs-1 / is-2 / cs-3</p>
+                <p className="text-cyan-400 text-xs font-mono">العمود B → اسم المادة</p>
+                <p className="text-gray-500 text-xs mt-1">الاسم لازم يطابق اسم التخصص في النظام</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Groups (default)</label>
+                  <input type="number" min="1" value={excelGrops}
+                    onChange={(e) => setExcelGrops(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-600 text-white rounded-lg px-2 py-1 text-sm" />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs mb-1 block">Sections (default)</label>
+                  <input type="number" min="0" value={excelGropLap}
+                    onChange={(e) => setExcelGropLap(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-600 text-white rounded-lg px-2 py-1 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-gray-400 text-xs mb-1 block">Enrollment (default)</label>
+                  <input type="number" min="1" value={excelEnrollment}
+                    onChange={(e) => setExcelEnrollment(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-600 text-white rounded-lg px-2 py-1 text-sm" />
+                </div>
+              </div>
+              <input
+                ref={excelInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleExcelUpload}
+                className="hidden"
+              />
+              <button
+                onClick={() => excelInputRef.current?.click()}
+                disabled={excelUploading}
+                className="w-full py-2 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium transition-colors"
+              >
+                {excelUploading ? "جاري الرفع..." : "📂 اختار ملف Excel"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+
       {/* Main Content */}
       <div className="background-main-pages">
         <Slidebar />
@@ -942,6 +1159,14 @@ const handleViewStaff = async (courseId, type) => {
               >
                 <PlusIcon className="h-4 w-4" />
                 Manage Departments
+              </Button>
+
+              <Button
+                onClick={() => setExcelModalOpen(true)}
+                variant="outlined"
+                className="border-green-500 text-green-400 hover:bg-green-900/20 flex items-center gap-1"
+              >
+                📊 Import Excel
               </Button>
 
               <Button
@@ -1072,7 +1297,17 @@ const handleViewStaff = async (courseId, type) => {
                                     className="hover:bg-black"
                                   >
                                     <td className="px-6 tex py-4 whitespace-nowrap text-sm text-white">
-                                      {course.name}
+                                      <div className="flex items-center gap-2">
+                                        {course.name}
+                                        {course.sharedGroupCode && (
+                                          <span
+                                            title={`Linked: ${course.sharedGroupCode}`}
+                                            className="text-xs bg-blue-700 text-blue-200 px-1.5 py-0.5 rounded"
+                                          >
+                                            🔗
+                                          </span>
+                                        )}
+                                      </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                                       {course.grops}
@@ -1125,6 +1360,14 @@ const handleViewStaff = async (courseId, type) => {
                                             setEditGrops(course.grops.toString());
                                             setEditGropLap(course.grop_lap.toString());
                                             setEditEnrollment(course.enrollment.toString());
+                                            if (course.sharedGroupCode) {
+                                              const linked = courses.find(
+                                                c => c.id !== course.id && c.sharedGroupCode === course.sharedGroupCode
+                                              );
+                                              setLinkCourseId(linked ? String(linked.id) : null);
+                                            } else {
+                                              setLinkCourseId(null);
+                                            }
                                             setEditNameModalOpen(true);
                                           }}
                                           className="text-blue-500 hover:text-blue-800 font-semibold px-2 py-1 rounded"
