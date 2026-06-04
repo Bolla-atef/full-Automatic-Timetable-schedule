@@ -6,40 +6,42 @@ const STORAGE_KEY = "collegeDepartments";
 const VERSION_KEY = "collegeDepartmentsVersion";
 
 // ↓ ارفع الرقم ده بواحد كل ما تعدل في الـ DEFAULTS
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
+// startYear: السنة اللي بيبدأ منها التخصص في العرض
+// مثال: General=1 year بيبدأ من 1، IS بيبدأ من 2 لو فيه General قبله
 const DEFAULTS = {
   ComputerScience: [
-    { id: "cs", name: "CS", years: 4 },
-    { id: "is", name: "IS", years: 4 },
+    { id: "cs", name: "CS", years: 4, startYear: 1 },
+    { id: "is", name: "IS", years: 3, startYear: 2 },
   ],
   engineering: [
-    { id: "general", name: "general", years: 1 },
-    { id: "Mechatronics", name: "Mechatronics", years: 4 },
-    { id: "Construction and building", name: "Construction and building", years: 4 },
+    { id: "general", name: "General", years: 1, startYear: 1 },
+    { id: "Mechatronics", name: "Mechatronics", years: 4, startYear: 2 },
+    { id: "Construction and building", name: "Construction and building", years: 4, startYear: 2 },
   ],
   Media_and_Communication_Arts: [
-    { id: "Radio and Television", name: "Radio and Television", years: 4 },
-    { id: "Public Relations and Advertising", name: "Public Relations and Advertising", years: 4 },
-    { id: "Press and Media", name: "Press and Media", years: 4 },
+    { id: "Radio and Television", name: "Radio and Television", years: 4, startYear: 1 },
+    { id: "Public Relations and Advertising", name: "Public Relations and Advertising", years: 4, startYear: 1 },
+    { id: "Press and Media", name: "Press and Media", years: 4, startYear: 1 },
   ],
   Business_Administration: [
-    { id: "Accounting", name: "Accounting", years: 4 },
-    { id: "Marketing", name: "Marketing", years: 4 },
-    { id: "Finance", name: "Finance", years: 4 },
+    { id: "Accounting", name: "Accounting", years: 4, startYear: 1 },
+    { id: "Marketing", name: "Marketing", years: 4, startYear: 1 },
+    { id: "Finance", name: "Finance", years: 4, startYear: 1 },
   ],
   Politics_and_Economics: [
-    { id: "Politics", name: "Politics", years: 4 },
-    { id: "Economics", name: "Economics", years: 4 },
+    { id: "Politics", name: "Politics", years: 4, startYear: 1 },
+    { id: "Economics", name: "Economics", years: 4, startYear: 1 },
   ],
   Languages_and_Translation: [
-    { id: "English", name: "English", years: 4 },
-    { id: "French", name: "French", years: 4 },
-    { id: "Spanish", name: "Spanish", years: 4 },
-    { id: "German", name: "German", years: 4 },
+    { id: "English", name: "English", years: 4, startYear: 1 },
+    { id: "French", name: "French", years: 4, startYear: 1 },
+    { id: "Spanish", name: "Spanish", years: 4, startYear: 1 },
+    { id: "German", name: "German", years: 4, startYear: 1 },
   ],
   social_service: [
-    { id: "General", name: "General", years: 4 },
+    { id: "General", name: "General", years: 4, startYear: 1 },
   ],
 };
 
@@ -94,11 +96,11 @@ export const getDepartments = (collegeId) => {
   return all[collegeId] || [];
 };
 
-export const addDepartment = (collegeId, name, years) => {
+export const addDepartment = (collegeId, name, years, startYear = 1) => {
   const all = loadAll();
   if (!all[collegeId]) all[collegeId] = [];
   const id = name.toLowerCase().replace(/\s+/g, "_") + "_" + Date.now();
-  all[collegeId].push({ id, name, years: parseInt(years) || 4 });
+  all[collegeId].push({ id, name, years: parseInt(years) || 4, startYear: parseInt(startYear) || 1 });
   saveAll(all);
   return all[collegeId];
 };
@@ -116,8 +118,9 @@ export const buildYearLabels = (collegeId) => {
   const labels = {};
   let counter = 1;
   deps.forEach((dept) => {
-    for (let y = 1; y <= dept.years; y++) {
-      labels[counter] = `${dept.name} - Year ${y}`;
+    const startYear = dept.startYear || 1;  // لو مفيش startYear يبدأ من 1
+    for (let y = 0; y < dept.years; y++) {
+      labels[counter] = `${dept.name} - Year ${startYear + y}`;
       counter++;
     }
   });
@@ -127,6 +130,28 @@ export const buildYearLabels = (collegeId) => {
 export const getYearLabel = (year, collegeId) => {
   const labels = buildYearLabels(collegeId);
   return labels[parseInt(year)] || `Year ${year}`;
+};
+
+/**
+ * buildReverseYearMap
+ * بيعمل map عكسي: "cs-1" → 1, "is-2" → 6, إلخ
+ * بيستخدمه الـ Excel Upload عشان يحول اسم التخصص+السنة لـ sequential year number
+ */
+export const buildReverseYearMap = (collegeId) => {
+  const deps = getDepartments(collegeId);
+  const reverse = {};
+  let counter = 1;
+  deps.forEach((dept) => {
+    const startYear = dept.startYear || 1;
+    const deptKey = dept.name.toLowerCase().trim();
+    for (let y = 0; y < dept.years; y++) {
+      const displayYear = startYear + y;
+      // "cs-1", "CS-1", "cs-2" كلهم بيشتغلوا
+      reverse[`${deptKey}-${displayYear}`] = counter;
+      counter++;
+    }
+  });
+  return reverse;
 };
 
 /**
