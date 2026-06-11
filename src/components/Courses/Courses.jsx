@@ -1,5 +1,6 @@
 import { useState, useEffect, Fragment, useMemo, useRef } from "react";
 import axios from "axios";
+import * as XLSX from "xlsx";
 import {
   Input,
   Option,
@@ -79,6 +80,8 @@ const GetCourses = () => {
   const [excelGropLap, setExcelGropLap] = useState("1");
   const [excelEnrollment, setExcelEnrollment] = useState("100");
   const [excelUploading, setExcelUploading] = useState(false);
+  const [excelSemester, setExcelSemester] = useState("1");
+  const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
 const [staffDialogOpen, setStaffDialogOpen] = useState(false);
 const [staffType, setStaffType] = useState(""); // "professors" or "teachingAssistants"
 const [staffList, setStaffList] = useState([]);
@@ -286,7 +289,7 @@ const getCourseById = async (id) => {
       toast.success("Delete Successfully");
     },
     onError: (error) => {
-      toast.error(`❌ فشل الحذف: ${error.response?.data?.message}`);
+      toast.error(`❌Deletion failed: ${error.response?.data?.message}`);
     },
   });
 
@@ -341,7 +344,7 @@ const getCourseById = async (id) => {
       setLinkCourseId(null);
     },
     onError: (error) => {
-      toast.error(`❌ فشل التحديث: ${error.message}`);
+      toast.error(`❌Update failed: ${error.message}`);
     },
   });
   const handleProceedEdit = () => {
@@ -435,7 +438,7 @@ const getCourseById = async (id) => {
       handleOpen();
     } catch (error) {
       toast.error(
-        `❌ حدث خطأ: ${error.response?.data?.message || "يرجى المحاولة لاحقًا"}`
+        `❌ An error ${error.response?.data?.message || "Please try again later"}`
       );
     }
   };
@@ -447,7 +450,7 @@ const handleViewStaff = async (courseId, type) => {
     setSelectedCourseName(data.name);
     setStaffDialogOpen(true);
   } catch (err) {
-    toast.error("فشل في تحميل بيانات المادة");
+    toast.error("Failed to load Course data");
   }
 };
 
@@ -482,25 +485,25 @@ const handleViewStaff = async (courseId, type) => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-      // بناء الـ reverse map: "cs-1" → sequential year number
       const reverseMap = buildReverseYearMap(collegeId);
 
-      // استخراج الصفوف — العمود A: "cs-1" أو "CS-2"، العمود B: اسم المادة
       const entries = rows
         .map((r) => ({
           deptYear: r[0] ? String(r[0]).trim().toLowerCase() : "",
           name: r[1] ? String(r[1]).trim() : "",
+          semester: r[2] !== undefined && r[2] !== null ? String(r[2]).trim() : "",
         }))
-        .filter((r) => r.deptYear && r.name && isNaN(r.deptYear));
+        .filter((r) => r.name && /^[a-z_]+-\d+$/.test(r.deptYear))
+        .filter((r) => r.semester === excelSemester);
 
       if (entries.length === 0) {
-        toast.error("مفيش بيانات صحيحة في الملف — تأكد من الفورمات: cs-1 | اسم المادة");
+        toast.error("مفيش بيانات صحيحة في الملف — تأكد من الفورمات وأرقام الـ Semester");
         setExcelUploading(false);
+        e.target.value = "";
         return;
       }
 
-      // تحقق إن كل الـ dept-year موجودة في الـ map
-      const unknownKeys = [...new Set(entries.map((e) => e.deptYear))].filter(
+      const unknownKeys = [...new Set(entries.map((en) => en.deptYear))].filter(
         (k) => !reverseMap[k]
       );
       if (unknownKeys.length > 0) {
@@ -534,14 +537,35 @@ const handleViewStaff = async (courseId, type) => {
       }
 
       await queryClient.invalidateQueries(["courses"]);
-      toast.success(`✅ تم إضافة ${added} مادة${failed > 0 ? ` (${failed} فشلت)` : ""}`);
+      toast.success(`✅ Added ${added} Course ${failed > 0 ? ` (${failed} Faild)` : ""}`);
       setExcelModalOpen(false);
       e.target.value = "";
     } catch (err) {
-      toast.error("❌ فشل قراءة الملف");
+      toast.error("❌ File reading failed");
     } finally {
       setExcelUploading(false);
     }
+  };
+
+  // ── Delete All Courses Handler ────────────────────────────────
+  const handleDeleteAllCourses = async () => {
+    setDeleteAllModalOpen(false);
+    const token = localStorage.getItem("userToken");
+    const currentCourses = queryClient.getQueryData(["courses"]) || [];
+    let deleted = 0;
+    for (const course of currentCourses) {
+      try {
+        await axios.delete(
+          `${import.meta.env.VITE_API_URL}/api/Courses/${course.id}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        deleted++;
+      } catch {
+        // كمل حتى لو مادة واحدة فشلت
+      }
+    }
+    await queryClient.invalidateQueries(["courses"]);
+    toast.success(`🗑️ Removed ${deleted} Course `);
   };
 
   // ── Department Handlers ───────────────────────────────────
@@ -662,14 +686,14 @@ const handleViewStaff = async (courseId, type) => {
                     placeholder="Start Y"
                     min="1"
                     max="10"
-                    title="السنة اللي بيبدأ منها التخصص (مثلاً 2 لو فيه General قبله)"
+                    title= "The year in which the specialization begins (for example, 2 if there is a General year before it)"
                     value={newDeptStartYear}
                     onChange={(e) => setNewDeptStartYear(e.target.value)}
                     className="w-20 bg-gray-800 border border-gray-600 text-cyan-400 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cyan-500"
                   />
                 </div>
                 <p className="text-gray-500 text-xs mb-3">
-                  Start Y: السنة اللي بيبدأ منها العرض — اتركها 1 لو مفيش General قبله
+                  Start Y: The year the show starts — leave it as 1 if there is no General before it
                 </p>
                 <button
                   onClick={handleAddDepartment}
@@ -1092,10 +1116,10 @@ const handleViewStaff = async (courseId, type) => {
             </div>
             <div className="p-5 space-y-4">
               <div className="bg-gray-800 rounded-lg p-3">
-                <p className="text-gray-300 text-sm font-medium mb-1">فورمات الشيت:</p>
-                <p className="text-cyan-400 text-xs font-mono">العمود A → cs-1 / is-2 / cs-3</p>
-                <p className="text-cyan-400 text-xs font-mono">العمود B → اسم المادة</p>
-                <p className="text-gray-500 text-xs mt-1">الاسم لازم يطابق اسم التخصص في النظام</p>
+                <p className="text-gray-300 text-sm font-medium mb-1"> Excel sheet format: </p>
+                <p className="text-cyan-400 text-xs font-mono">column A → cs-1 / is-2 / cs-3</p>
+                <p className="text-cyan-400 text-xs font-mono">column B → Course name </p>
+                <p className="text-gray-500 text-xs mt-1"> The name must match the name of the system </p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -1124,12 +1148,49 @@ const handleViewStaff = async (courseId, type) => {
                 onChange={handleExcelUpload}
                 className="hidden"
               />
+              <div>
+                <label className="text-gray-400 text-xs mb-1 block">Semester</label>
+                <select
+                  value={excelSemester}
+                  onChange={(e) => setExcelSemester(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-600 text-white rounded-lg px-2 py-1 text-sm"
+                >
+                  <option value="1">Semester 1</option>
+                  <option value="2">Semester 2</option>
+                </select>
+              </div>
               <button
                 onClick={() => excelInputRef.current?.click()}
                 disabled={excelUploading}
                 className="w-full py-2 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium transition-colors"
               >
                 {excelUploading ? "جاري الرفع..." : "📂 اختار ملف Excel"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete All Confirmation Modal ── */}
+      {deleteAllModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-80 shadow-xl">
+            <h3 className="text-white font-semibold text-base mb-2">Delete all courses ⚠️</h3>
+            <p className="text-gray-400 text-sm mb-5">
+             It will permanently erase all existing data. Are you sure?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleDeleteAllCourses}
+                className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-colors"
+              >
+               Yes , Delete all
+              </button>
+              <button
+                onClick={() => setDeleteAllModalOpen(false)}
+                className="flex-1 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors"
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -1167,6 +1228,14 @@ const handleViewStaff = async (courseId, type) => {
                 className="border-green-500 text-green-400 hover:bg-green-900/20 flex items-center gap-1"
               >
                 📊 Import Excel
+              </Button>
+
+              <Button
+                onClick={() => setDeleteAllModalOpen(true)}
+                variant="outlined"
+                className="border-red-500 text-red-400 hover:bg-red-900/20 flex items-center gap-1"
+              >
+                🗑️ Delete all Courses
               </Button>
 
               <Button
