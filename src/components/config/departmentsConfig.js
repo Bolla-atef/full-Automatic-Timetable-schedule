@@ -6,7 +6,7 @@ const STORAGE_KEY = "collegeDepartments";
 const VERSION_KEY = "collegeDepartmentsVersion";
 
 // ↓ ارفع الرقم ده بواحد كل ما تعدل في الـ DEFAULTS
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 1;
 
 // startYear: السنة اللي بيبدأ منها التخصص في العرض
 // مثال: General=1 year بيبدأ من 1، IS بيبدأ من 2 لو فيه General قبله
