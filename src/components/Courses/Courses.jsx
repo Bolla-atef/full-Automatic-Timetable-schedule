@@ -305,10 +305,10 @@ const getCourseById = async (id) => {
       const payload = {
         name: newName,
         year: currentCourse.year,
-        grops: parseInt(grops) || currentCourse.grops,
-        grop_lap: parseInt(grop_lap) || currentCourse.grop_lap,
-        enrollment: parseInt(enrollment) || currentCourse.enrollment,
-        sharedGroupCode: linkCourseId ? sharedGroupCode : null,
+        grops: grops !== "" ? parseInt(grops): currentCourse.grops,
+        grop_lap: grop_lap !== "" ? parseInt(grop_lap): currentCourse.grop_lap,
+        enrollment: enrollment !== "" ? parseInt(enrollment): currentCourse.enrollment,
+        sharedGroupCode: linkCourseId ? sharedGroupCode: null,
 
       };
 
