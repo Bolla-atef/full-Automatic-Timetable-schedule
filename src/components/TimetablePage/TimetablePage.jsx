@@ -678,13 +678,14 @@ const exportAllTablesToPDF = useCallback(async () => {
               }}
             >
               {Object.keys(organizedData).map((year) => (
-                <Option key={year} value={year}>
+                <Option key={year} value={year} selected={year === selectedYear}>
                   {getYearLabel(year)}
                 </Option>
               ))}
             </Select>
 
             <Select
+              key={`group-select-${selectedYear}`}
               label="select the group"
               value={selectedGroup}
               onChange={(value) => setSelectedGroup(value)}
@@ -692,7 +693,7 @@ const exportAllTablesToPDF = useCallback(async () => {
               {selectedYear &&
                 organizedData[selectedYear] &&
                 Object.keys(organizedData[selectedYear]).map((group) => (
-                  <Option key={group} value={group}>
+                  <Option key={group} value={group} selected={group === selectedGroup}>
                     group {group}
                   </Option>
                 ))}
